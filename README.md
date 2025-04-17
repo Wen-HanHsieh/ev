@@ -36,7 +36,7 @@ A simple and effective pipeline for predicting electric vehicle (EV) energy cons
 ---
 
 ## 🧪 Evaluation Results
-
+```text
 ========================================
 Evaluation Results on EV Data (ID(s): [541])
 ----------------------------------------
@@ -57,8 +57,8 @@ Sample predictions vs. ground truth:
   pred = 0.2451 kWh, true = 0.2605 kWh
 ========================================
 
-
 ---
+```
 
 ## ⚙️ Installation
 
@@ -77,8 +77,9 @@ pip install numpy pandas torch tqdm scikit-learn
 ...
 ```
 
-## 🚀 Running the Pipeline
 
+## 🚀 Running the Pipeline
+```bash
 # Step 1: Pretraining
 python pretrain.py
 
