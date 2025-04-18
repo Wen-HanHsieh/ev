@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import TensorDataset, DataLoader
-from sklearn.metrics import mean_squared_error, mean_absolute_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error, mean_absolute_percentage_error, r2_score
 
 # 1) EV IDs and checkpoint
 EV_IDS   = [541]
@@ -93,6 +93,8 @@ trues = np.concatenate(trues)
 mse  = mean_squared_error(trues, preds)
 rmse = np.sqrt(mse)
 mae  = mean_absolute_error(trues, preds)
+map_ = mean_absolute_percentage_error(trues, preds)
+r2 = r2_score(trues, preds)
 
 # Additional info
 num_samples = len(trues)
@@ -109,6 +111,8 @@ print(f"  Ground truth std deviation     : {std_true:.4f} kWh\n")
 print(f"  MSE  = {mse:.6f} (kWh²)")
 print(f"  RMSE = {rmse:.6f} (kWh)")
 print(f"  MAE  = {mae:.6f} (kWh)")
+print(f"  MAP  = {map_:.6f}")
+print(f"  R^2 = {r2:.4f}")
 print("="*40)
 
 print("\nSample predictions vs. ground truth:")
