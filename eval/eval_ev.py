@@ -10,8 +10,13 @@ os.chdir(script_dir)
 
 # 1) EV IDs and checkpoint
 EV_IDS   = [541]
-DATA_FILE = 'timeseries_dataset_phev_ev.npz'
-CKPT_PATH = 'best_finetune.pt'
+gas_data_percent = 1.0 # choose it from [0.2,0.4,0.6,0.8,1.0]
+DATA_FILE = '../timeseries_dataset_phev_ev.npz'
+# CKPT_PATH = f'../model_config/best_finetune_from_gas_to_ev_dann.pt'
+# CKPT_PATH = f'../model_config/best_finetune_from_gas_to_ev_mme.pt'
+# CKPT_PATH = f'../model_config/best_finetune_from_{gas_data_percent}_gas_to_ev_fft.pt'
+# CKPT_PATH = f'../model_config/best_finetune_from_{gas_data_percent}_gas_to_ev.pt'
+# CKPT_PATH = '../model_config/best_train_ev_itself.pt'
 BATCH_SIZE = 64
 
 def load_and_filter(path, id_list):
@@ -58,7 +63,8 @@ class TransformerRegressor(nn.Module):
                                                dropout, batch_first=True)
         self.encoder   = nn.TransformerEncoder(enc_layer, num_layers)
         self.regressor = nn.Sequential(nn.LayerNorm(d_model),
-                                       nn.Linear(d_model, 1))
+                                       nn.Linear(d_model, d_model*2),
+                                       nn.Linear(d_model*2, 1))
     def forward(self, x):
         x = self.input_proj(x)
         x = self.pos_enc(x)
@@ -72,6 +78,7 @@ model.eval()
 
 # 4) Prepare EV data
 X, y = load_and_filter(DATA_FILE, EV_IDS)
+print(X.shape)
 X = X[..., 1:]  # drop VehId
 flat = X.reshape(-1, nfeat)
 flat = scaler.transform(flat)
@@ -105,7 +112,7 @@ mean_true = np.mean(trues)
 std_true = np.std(trues)
 
 print("="*40)
-print(f"Evaluation Results on EV Data (ID(s): {EV_IDS})")
+print(f"Evaluation Results on sampled EV Data")
 print("-"*40)
 print(f"  Total sequences evaluated: {num_samples}")
 print(f"  Ground truth mean energy usage : {mean_true:.4f} kWh")

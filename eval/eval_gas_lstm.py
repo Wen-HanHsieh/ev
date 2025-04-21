@@ -9,9 +9,10 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
 
 # 1) EV IDs and checkpoint
-EV_IDS   = [541]
-DATA_FILE = 'timeseries_dataset_phev_ev.npz'
-CKPT_PATH = 'best_finetune.pt'
+GAS_IDS   = [487,501,506,507,522,539,552,562,571,575,577]
+gas_data_percent = 1.0 # choose it from [0.2,0.4,0.6,0.8,1.0]
+DATA_FILE = '../timeseries_dataset_icv_hev.npz'
+CKPT_PATH = '../model_config/best_train_gas_itself_lstm.pt'
 BATCH_SIZE = 64
 
 def load_and_filter(path, id_list):
@@ -22,7 +23,9 @@ def load_and_filter(path, id_list):
     mask = np.isin(veh, id_list)
     X, y = X[mask], y[mask]
     mask2 = ~np.isnan(X).any(axis=tuple(range(1, X.ndim)))
-    return X[mask2], y[mask2]
+    X, y  = X[mask2], y[mask2]
+    mask_pos = y > 0.001
+    return  X[mask_pos], y[mask_pos]
 
 # 2) Load model + scaler
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -36,42 +39,45 @@ seq_len = ckpt['seq_len']
 scaler  = ckpt['scaler']
 
 # 3) Re‑define model classes (same as train.py)
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
+# 9) Model definitions (same as pretrain)
+class BiLSTMRegressor(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, dropout=0.2):
         super().__init__()
-        pe = torch.zeros(max_len, d_model)
-        pos = torch.arange(0, max_len).unsqueeze(1).float()
-        div = torch.exp(torch.arange(0, d_model, 2).float() * -(np.log(10000)/d_model))
-        pe[:, 0::2] = torch.sin(pos*div)
-        pe[:, 1::2] = torch.cos(pos*div)
-        self.register_buffer('pe', pe.unsqueeze(0))
-    def forward(self, x):
-        return x + self.pe[:, :x.size(1)]
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.bidirectional = True
+        self.num_directions = 2
 
-class TransformerRegressor(nn.Module):
-    def __init__(self, feature_dim, d_model=64, nhead=4,
-                 num_layers=3, dim_ff=128, dropout=0.1):
-        super().__init__()
-        self.input_proj = nn.Linear(feature_dim, d_model)
-        self.pos_enc    = PositionalEncoding(d_model)
-        enc_layer = nn.TransformerEncoderLayer(d_model, nhead, dim_ff,
-                                               dropout, batch_first=True)
-        self.encoder   = nn.TransformerEncoder(enc_layer, num_layers)
-        self.regressor = nn.Sequential(nn.LayerNorm(d_model),
-                                       nn.Linear(d_model, 1))
-    def forward(self, x):
-        x = self.input_proj(x)
-        x = self.pos_enc(x)
-        x = self.encoder(x)
-        x = x.mean(dim=1)
-        return self.regressor(x)
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0.0,
+            bidirectional=self.bidirectional,
+            batch_first=True
+        )
+        self.fc = nn.Linear(hidden_size * self.num_directions, 1)
 
-model = TransformerRegressor(feature_dim=nfeat).to(device)
+    def forward(self, x):
+        batch_size = x.size(0)
+
+        h0 = torch.zeros(self.num_layers * self.num_directions, batch_size, self.hidden_size, device=x.device)
+        c0 = torch.zeros(self.num_layers * self.num_directions, batch_size, self.hidden_size, device=x.device)
+
+        out, _ = self.lstm(x, (h0, c0))
+
+        last_time_step = out[:, -1, :]
+
+        out = self.fc(last_time_step)
+        return out
+
+model = BiLSTMRegressor(nfeat, 43, num_layers=3).to(device)
 model.load_state_dict(ckpt['model_state'])
 model.eval()
 
 # 4) Prepare EV data
-X, y = load_and_filter(DATA_FILE, EV_IDS)
+X, y = load_and_filter(DATA_FILE, GAS_IDS)
+print(X.shape)
 X = X[..., 1:]  # drop VehId
 flat = X.reshape(-1, nfeat)
 flat = scaler.transform(flat)
@@ -105,7 +111,7 @@ mean_true = np.mean(trues)
 std_true = np.std(trues)
 
 print("="*40)
-print(f"Evaluation Results on EV Data (ID(s): {EV_IDS})")
+print(f"Evaluation Results on sampled GAS Data")
 print("-"*40)
 print(f"  Total sequences evaluated: {num_samples}")
 print(f"  Ground truth mean energy usage : {mean_true:.4f} kWh")
