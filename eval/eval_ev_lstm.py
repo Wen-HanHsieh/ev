@@ -10,8 +10,9 @@ os.chdir(script_dir)
 
 # 1) EV IDs and checkpoint
 EV_IDS   = [541]
-DATA_FILE = 'timeseries_dataset_phev_ev.npz'
-CKPT_PATH = 'best_finetune.pt'
+gas_data_percent = 0.2 # choose it from [0.2,0.4,0.6,0.8,1.0]
+DATA_FILE = '../timeseries_dataset_phev_ev.npz'
+CKPT_PATH = f'../model_config/best_finetune_from_{gas_data_percent}_gas_to_ev_lstm.pt'
 BATCH_SIZE = 64
 
 def load_and_filter(path, id_list):
@@ -36,37 +37,53 @@ seq_len = ckpt['seq_len']
 scaler  = ckpt['scaler']
 
 # 3) Re‑define model classes (same as train.py)
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
+class BiLSTMRegressor(nn.Module):
+    def __init__(self, input_size, hidden_size, num_layers, dropout=0.2):
         super().__init__()
-        pe = torch.zeros(max_len, d_model)
-        pos = torch.arange(0, max_len).unsqueeze(1).float()
-        div = torch.exp(torch.arange(0, d_model, 2).float() * -(np.log(10000)/d_model))
-        pe[:, 0::2] = torch.sin(pos*div)
-        pe[:, 1::2] = torch.cos(pos*div)
-        self.register_buffer('pe', pe.unsqueeze(0))
-    def forward(self, x):
-        return x + self.pe[:, :x.size(1)]
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.bidirectional = True
+        self.num_directions = 2
 
-class TransformerRegressor(nn.Module):
-    def __init__(self, feature_dim, d_model=64, nhead=4,
-                 num_layers=3, dim_ff=128, dropout=0.1):
-        super().__init__()
-        self.input_proj = nn.Linear(feature_dim, d_model)
-        self.pos_enc    = PositionalEncoding(d_model)
-        enc_layer = nn.TransformerEncoderLayer(d_model, nhead, dim_ff,
-                                               dropout, batch_first=True)
-        self.encoder   = nn.TransformerEncoder(enc_layer, num_layers)
-        self.regressor = nn.Sequential(nn.LayerNorm(d_model),
-                                       nn.Linear(d_model, 1))
-    def forward(self, x):
-        x = self.input_proj(x)
-        x = self.pos_enc(x)
-        x = self.encoder(x)
-        x = x.mean(dim=1)
-        return self.regressor(x)
+        self.lstm = nn.LSTM(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout=dropout if num_layers > 1 else 0.0,
+            bidirectional=self.bidirectional,
+            batch_first=True
+        )
+        self.fc = nn.Linear(hidden_size * self.num_directions, 1)
 
-model = TransformerRegressor(feature_dim=nfeat).to(device)
+    def forward(self, x):
+        batch_size = x.size(0)
+
+        h0 = torch.zeros(self.num_layers * self.num_directions, batch_size, self.hidden_size, device=x.device)
+        c0 = torch.zeros(self.num_layers * self.num_directions, batch_size, self.hidden_size, device=x.device)
+
+        out, _ = self.lstm(x, (h0, c0))
+
+        last_time_step = out[:, -1, :]
+
+        out = self.fc(last_time_step)
+        return out
+
+def init_weights(m):
+    if isinstance(m, nn.Linear) or isinstance(m, nn.LSTM):
+        for param in m.parameters():
+            if param.dim() > 1:
+                nn.init.xavier_uniform_(param)
+
+model = BiLSTMRegressor(nfeat, hidden_size=43, num_layers=3)
+model.apply(init_weights)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model.to(device)
+
+criterion = nn.MSELoss()
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
+num_epochs = 5
+
+# model = TransformerRegressor(feature_dim=nfeat).to(device)
 model.load_state_dict(ckpt['model_state'])
 model.eval()
 

@@ -9,9 +9,10 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(script_dir)
 
 # 1) EV IDs and checkpoint
-EV_IDS   = [541]
-DATA_FILE = 'timeseries_dataset_phev_ev.npz'
-CKPT_PATH = 'best_finetune.pt'
+GAS_IDS   = [487,501,506,507,522,539,552,562,571,575,577]
+gas_data_percent = 1.0 # choose it from [0.2,0.4,0.6,0.8,1.0]
+DATA_FILE = '../timeseries_dataset_icv_hev.npz'
+CKPT_PATH = '../model_config/best_train_gas_itself_transformer.pt'
 BATCH_SIZE = 64
 
 def load_and_filter(path, id_list):
@@ -22,7 +23,9 @@ def load_and_filter(path, id_list):
     mask = np.isin(veh, id_list)
     X, y = X[mask], y[mask]
     mask2 = ~np.isnan(X).any(axis=tuple(range(1, X.ndim)))
-    return X[mask2], y[mask2]
+    X, y  = X[mask2], y[mask2]
+    mask_pos = y > 0.001
+    return  X[mask_pos], y[mask_pos]
 
 # 2) Load model + scaler
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -58,7 +61,8 @@ class TransformerRegressor(nn.Module):
                                                dropout, batch_first=True)
         self.encoder   = nn.TransformerEncoder(enc_layer, num_layers)
         self.regressor = nn.Sequential(nn.LayerNorm(d_model),
-                                       nn.Linear(d_model, 1))
+                                       nn.Linear(d_model, d_model*2),
+                                       nn.Linear(d_model*2, 1))
     def forward(self, x):
         x = self.input_proj(x)
         x = self.pos_enc(x)
@@ -71,7 +75,8 @@ model.load_state_dict(ckpt['model_state'])
 model.eval()
 
 # 4) Prepare EV data
-X, y = load_and_filter(DATA_FILE, EV_IDS)
+X, y = load_and_filter(DATA_FILE, GAS_IDS)
+print(X.shape)
 X = X[..., 1:]  # drop VehId
 flat = X.reshape(-1, nfeat)
 flat = scaler.transform(flat)
@@ -105,7 +110,7 @@ mean_true = np.mean(trues)
 std_true = np.std(trues)
 
 print("="*40)
-print(f"Evaluation Results on EV Data (ID(s): {EV_IDS})")
+print(f"Evaluation Results on sampled GAS Data")
 print("-"*40)
 print(f"  Total sequences evaluated: {num_samples}")
 print(f"  Ground truth mean energy usage : {mean_true:.4f} kWh")
